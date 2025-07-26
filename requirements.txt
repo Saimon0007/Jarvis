@@ -1,0 +1,31 @@
+# Core dependencies
+python-dotenv>=1.0.0
+requests>=2.31.0
+
+# Database
+sqlite3  # Built-in with Python
+
+# AI/ML dependencies
+chromadb>=0.4.0
+sentence-transformers>=2.2.0
+tiktoken>=0.5.0
+
+# Speech recognition (optional)
+SpeechRecognition>=3.10.0
+# pyaudio>=0.2.11  # Uncomment if you plan to use voice features
+
+# Google Cloud services (optional)
+google-cloud-translate>=3.12.0
+
+# Web framework for API server (optional)
+flask>=2.3.0
+
+# Computer vision (optional - uncomment if needed)
+# opencv-python>=4.8.0
+# face_recognition>=1.3.0
+# pillow>=10.0.0  # Already available in your venv
+
+# Development and testing (optional)
+# pytest>=7.4.0
+# black>=23.0.0
+# flake8>=6.0.0
