@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JARVIS - AI Assistant</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <!-- Background Animation -->
+    <div class="bg-animation">
+        <div class="circuit-board">
+            <div class="circuit-line" style="top: 20%; left: 10%; width: 200px; height: 2px;"></div>
+            <div class="circuit-line" style="top: 40%; left: 60%; width: 150px; height: 2px;"></div>
+            <div class="circuit-line vertical" style="top: 10%; left: 80%; width: 2px; height: 300px;"></div>
+            <div class="circuit-node" style="top: 20%; left: 30%;"></div>
+            <div class="circuit-node" style="top: 60%; left: 70%;"></div>
+            <div class="circuit-node" style="top: 80%; left: 20%;"></div>
+        </div>
+        <div class="floating-particles">
+            <div class="particle" style="top: 10%; left: 15%; animation-delay: 0s;"></div>
+            <div class="particle" style="top: 30%; left: 85%; animation-delay: 2s;"></div>
+            <div class="particle" style="top: 70%; left: 45%; animation-delay: 4s;"></div>
+            <div class="particle" style="top: 90%; left: 75%; animation-delay: 6s;"></div>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <div class="logo">
+                    <div class="logo-icon">
+                        <i class="fas fa-brain"></i>
+                        <div class="pulse-ring"></div>
+                    </div>
+                    <div class="logo-text">
+                        <h1>JARVIS</h1>
+                        <span class="tagline">Advanced AI Assistant</span>
+                    </div>
+                </div>
+                <div class="status-indicator">
+                    <div class="status-dot online"></div>
+                    <span>Online</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Chat Area -->
+        <main class="chat-container">
+            <!-- Chat Messages -->
+            <div class="chat-messages" id="chatMessages">
+                <!-- Welcome Message -->
+                <div class="message-group jarvis-message">
+                    <div class="message-avatar">
+                        <i class="fas fa-robot"></i>
+                    </div>
+                    <div class="message-content">
+                        <div class="message-bubble">
+                            <div class="message-text">
+                                <div class="typing-effect">
+                                    Welcome! I'm JARVIS, your advanced AI assistant. I can help you with coding, research, problem-solving, and much more. What would you like to explore today?
+                                </div>
+                            </div>
+                            <div class="message-timestamp">Just now</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Suggestions Panel -->
+            <div class="suggestions-panel" id="suggestionsPanel">
+                <h3>Quick Start</h3>
+                <div class="suggestion-grid">
+                    <div class="suggestion-card" onclick="sendSuggestion('What can you do?')">
+                        <i class="fas fa-question-circle"></i>
+                        <span>Explore Capabilities</span>
+                    </div>
+                    <div class="suggestion-card" onclick="sendSuggestion('Write a Python function')">
+                        <i class="fas fa-code"></i>
+                        <span>Code Generation</span>
+                    </div>
+                    <div class="suggestion-card" onclick="sendSuggestion('Explain quantum computing')">
+                        <i class="fas fa-atom"></i>
+                        <span>Research & Learn</span>
+                    </div>
+                    <div class="suggestion-card" onclick="sendSuggestion('Help me solve a problem')">
+                        <i class="fas fa-lightbulb"></i>
+                        <span>Problem Solving</span>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Input Area -->
+        <div class="input-container">
+            <div class="input-wrapper">
+                <button class="attachment-btn" title="Attach file">
+                    <i class="fas fa-paperclip"></i>
+                </button>
+                <div class="input-field">
+                    <textarea 
+                        id="messageInput" 
+                        placeholder="Ask JARVIS anything..." 
+                        rows="1"
+                        maxlength="2000"
+                    ></textarea>
+                </div>
+                <div class="input-actions">
+                    <button class="voice-btn" id="voiceBtn" title="Voice input">
+                        <i class="fas fa-microphone"></i>
+                    </button>
+                    <button class="send-btn" id="sendBtn" title="Send message">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="input-footer">
+                <span class="character-count" id="charCount">0 / 2000</span>
+                <div class="powered-by">
+                    <i class="fas fa-bolt"></i>
+                    Powered by Advanced AI
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Skills Panel -->
+    <div class="skills-panel" id="skillsPanel">
+        <div class="skills-header">
+            <h3><i class="fas fa-cog"></i> Available Skills</h3>
+            <button class="close-skills" onclick="toggleSkillsPanel()">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="skills-list" id="skillsList">
+            <div class="skill-item">
+                <i class="fas fa-spinner fa-spin"></i>
+                Loading skills...
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner">
+            <div class="spinner-ring"></div>
+            <div class="loading-text">JARVIS is thinking...</div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3><i class="fas fa-cog"></i> Settings</h3>
+                <button class="close-modal" onclick="closeSettings()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-content">
+                <div class="setting-group">
+                    <label>Theme</label>
+                    <select id="themeSelect">
+                        <option value="dark">Dark Mode</option>
+                        <option value="light">Light Mode</option>
+                        <option value="auto">Auto</option>
+                    </select>
+                </div>
+                <div class="setting-group">
+                    <label>Response Speed</label>
+                    <div class="slider-container">
+                        <input type="range" id="speedSlider" min="1" max="3" value="2">
+                        <div class="slider-labels">
+                            <span>Careful</span>
+                            <span>Balanced</span>
+                            <span>Fast</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="setting-group">
+                    <label>Voice Input</label>
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="voiceToggle" checked>
+                        <label for="voiceToggle"></label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating Action Buttons -->
+    <div class="fab-container">
+        <button class="fab main-fab" onclick="toggleFabMenu()">
+            <i class="fas fa-plus"></i>
+        </button>
+        <button class="fab sub-fab" onclick="toggleSkillsPanel()" title="Skills">
+            <i class="fas fa-magic"></i>
+        </button>
+        <button class="fab sub-fab" onclick="openSettings()" title="Settings">
+            <i class="fas fa-cog"></i>
+        </button>
+        <button class="fab sub-fab" onclick="clearChat()" title="Clear Chat">
+            <i class="fas fa-trash"></i>
+        </button>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
