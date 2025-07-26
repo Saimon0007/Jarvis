@@ -1,0 +1,151 @@
+"""
+Web search skill for Jarvis: Fetches and summarizes web search results.
+Usage: search <query>
+"""
+import requests
+import os
+
+def duckduckgo_search(query):
+    url = f"https://api.duckduckgo.com/?q={query}&format=json&no_redirect=1&no_html=1"
+    resp = requests.get(url, timeout=5)
+    data = resp.json()
+    if data.get("AbstractText"):
+        return data['AbstractText']
+    elif data.get("RelatedTopics"):
+        topic = data["RelatedTopics"][0]
+        if isinstance(topic, dict) and topic.get("Text"):
+            return topic['Text']
+    return None
+
+def wikipedia_search(query):
+    url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(query)}"
+    resp = requests.get(url, timeout=5)
+    if resp.status_code == 200:
+        data = resp.json()
+        if data.get("extract"):
+            return data['extract']
+    return None
+
+def bing_search(query):
+    api_key = os.getenv("BING_API_KEY")
+    if not api_key:
+        return None
+    url = f"https://api.bing.microsoft.com/v7.0/search?q={requests.utils.quote(query)}"
+    headers = {"Ocp-Apim-Subscription-Key": api_key}
+    resp = requests.get(url, headers=headers, timeout=5)
+    if resp.status_code == 200:
+        data = resp.json()
+        if "webPages" in data and "value" in data["webPages"] and data["webPages"]["value"]:
+            snippet = data["webPages"]["value"][0].get("snippet")
+            if snippet:
+                return snippet
+    return None
+
+def google_search(query):
+    api_key = os.getenv("GOOGLE_API_KEY")
+    cx = os.getenv("GOOGLE_CSE_ID")
+    if not api_key or not cx:
+        return None
+    url = f"https://www.googleapis.com/customsearch/v1?q={requests.utils.quote(query)}&key={api_key}&cx={cx}"
+    resp = requests.get(url, timeout=5)
+    if resp.status_code == 200:
+        data = resp.json()
+        if "items" in data and data["items"]:
+            snippet = data["items"][0].get("snippet")
+            if snippet:
+                return snippet
+    return None
+
+def search_skill(user_input):
+    """
+    Online search skill for Jarvis. Tries DuckDuckGo, Wikipedia, Bing, and Google in order.
+    Usage: search <query>
+    """
+    query = user_input[len("search"):].strip()
+    if not query:
+        return "Please provide a search query."
+
+    # Check if user wants a detailed answer
+    want_detail = any(word in query.lower() for word in ["detail", "explain", "explanation", "more info", "full", "expand"])
+    # Remove detail keywords for cleaner search
+    clean_query = query.lower()
+    for word in ["detail", "explain", "explanation", "more info", "full", "expand"]:
+        clean_query = clean_query.replace(word, "")
+    clean_query = clean_query.strip()
+
+    # Try Google first, then add more APIs for broader coverage
+    def serper_search(query):
+        """Search using Serper.dev Google Search API (requires SERPER_API_KEY env var)"""
+        api_key = os.getenv("SERPER_API_KEY")
+        if not api_key:
+            return None
+        url = "https://google.serper.dev/search"
+        headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
+        data = {"q": query}
+        try:
+            resp = requests.post(url, headers=headers, json=data, timeout=8)
+            resp.raise_for_status()
+            result = resp.json()
+            if "answerBox" in result and result["answerBox"].get("answer"):
+                return result["answerBox"]["answer"]
+            if "organic" in result and result["organic"]:
+                return result["organic"][0].get("snippet")
+        except Exception:
+            pass
+        return None
+
+    def brave_search(query):
+        """Search using Brave Search API (requires BRAVE_API_KEY env var)"""
+        api_key = os.getenv("BRAVE_API_KEY")
+        if not api_key:
+            return None
+        url = f"https://api.search.brave.com/res/v1/web/search?q={requests.utils.quote(query)}"
+        headers = {"Accept": "application/json", "X-Subscription-Token": api_key}
+        try:
+            resp = requests.get(url, headers=headers, timeout=8)
+            resp.raise_for_status()
+            data = resp.json()
+            if "web" in data and "results" in data["web"] and data["web"]["results"]:
+                return data["web"]["results"][0].get("description")
+        except Exception:
+            pass
+        return None
+
+    # Google first, then Serper, Brave, Bing, DuckDuckGo, Wikipedia
+    providers = [google_search, serper_search, brave_search, bing_search, duckduckgo_search, wikipedia_search]
+    errors = []
+    for provider in providers:
+        try:
+            result = provider(clean_query)
+            if result:
+                # If user wants detail, try to get a longer or more complete answer
+                if want_detail and len(result) < 300:
+                    # Try Wikipedia or Google for more info if not already used
+                    if provider != wikipedia_search:
+                        wiki = wikipedia_search(clean_query)
+                        if wiki and len(wiki) > len(result):
+                            return wiki
+                    if provider != google_search:
+                        google = google_search(clean_query)
+                        if google and len(google) > len(result):
+                            return google
+                return result
+        except Exception as e:
+            errors.append(f"{provider.__name__} failed: {e}")
+    # If all providers fail, try again with a slightly modified query (e.g., remove question marks)
+    if not errors or all(r is None for r in errors):
+        alt_query = clean_query.replace("?", "").strip()
+        if alt_query != clean_query:
+            for provider in providers:
+                try:
+                    result = provider(alt_query)
+                    if result:
+                        return result
+                except Exception as e:
+                    errors.append(f"{provider.__name__} failed: {e}")
+    if errors:
+        return "Search failed. Details: " + "; ".join(errors)
+    return "Sorry, I couldn't find anything useful for that. Try rephrasing!"
+
+def register(jarvis):
+    jarvis.register_skill("search", search_skill)
