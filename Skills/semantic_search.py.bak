@@ -1,0 +1,405 @@
+"""
+Enhanced Semantic Search and Information Retrieval for Jarvis: Provides intelligent
+search capabilities using embeddings, similarity matching, and multi-source integration.
+"""
+
+import re
+import json
+import logging
+import asyncio
+from typing import List, Dict, Tuple, Optional, Any, Union
+from datetime import datetime, timedelta
+from collections import defaultdict, deque
+import hashlib
+import os
+
+# Try to import advanced libraries
+try:
+    from sentence_transformers import SentenceTransformer
+    import numpy as np
+    EMBEDDINGS_AVAILABLE = True
+except ImportError:
+    EMBEDDINGS_AVAILABLE = False
+    logging.warning("sentence-transformers not available. Falling back to basic search.")
+
+try:
+    import chromadb
+    from chromadb.config import Settings
+    CHROMADB_AVAILABLE = True
+except ImportError:
+    CHROMADB_AVAILABLE = False
+    logging.warning("ChromaDB not available. Using in-memory search.")
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class EmbeddingManager:
+    """Manages text embeddings for semantic search."""
+    
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+        self.model_name = model_name
+        self.model = None
+        self.cache = {}
+        
+        if EMBEDDINGS_AVAILABLE:
+            try:
+                self.model = SentenceTransformer(model_name)
+                logger.info(f"Loaded embedding model: {model_name}")
+            except Exception as e:
+                logger.error(f"Failed to load embedding model: {e}")
+                self.model = None
+    
+    def get_embedding(self, text: str) -> Optional[np.ndarray]:
+        """Get embedding for text with caching."""
+        if not self.model:
+            return None
+            
+        # Use hash as cache key
+        text_hash = hashlib.md5(text.encode()).hexdigest()
+        
+        if text_hash in self.cache:
+            return self.cache[text_hash]
+        
+        try:
+            embedding = self.model.encode([text])[0]
+            self.cache[text_hash] = embedding
+            return embedding
+        except Exception as e:
+            logger.error(f"Error generating embedding: {e}")
+            return None
+    
+    def compute_similarity(self, text1: str, text2: str) -> float:
+        """Compute semantic similarity between two texts."""
+        if not self.model:
+            # Fallback to simple word overlap
+            words1 = set(text1.lower().split())
+            words2 = set(text2.lower().split())
+            if not words1 or not words2:
+                return 0.0
+            return len(words1.intersection(words2)) / len(words1.union(words2))
+        
+        try:
+            emb1 = self.get_embedding(text1)
+            emb2 = self.get_embedding(text2)
+            
+            if emb1 is None or emb2 is None:
+                return 0.0
+            
+            # Cosine similarity
+            similarity = np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2))
+            return float(similarity)
+        except Exception as e:
+            logger.error(f"Error computing similarity: {e}")
+            return 0.0
+
+class KnowledgeBase:
+    """Manages a searchable knowledge base with semantic capabilities."""
+    
+    def __init__(self, embedding_manager: EmbeddingManager):
+        self.embedding_manager = embedding_manager
+        self.documents = []
+        self.embeddings = []
+        self.metadata = []
+        
+        # Initialize ChromaDB if available
+        self.chroma_client = None
+        self.collection = None
+        
+        if CHROMADB_AVAILABLE:
+            try:
+                chroma_dir = os.path.join(os.path.dirname(__file__), "..", "semantic_search_db")
+                self.chroma_client = chromadb.Client(Settings(persist_directory=chroma_dir))
+                self.collection = self.chroma_client.get_or_create_collection("semantic_search")
+                logger.info("ChromaDB initialized for semantic search")
+            except Exception as e:
+                logger.error(f"Failed to initialize ChromaDB: {e}")
+    
+    def add_document(self, text: str, metadata: Dict[str, Any] = None) -> bool:
+        """Add a document to the knowledge base."""
+        if not text.strip():
+            return False
+        
+        doc_id = hashlib.md5(text.encode()).hexdigest()
+        
+        if metadata is None:
+            metadata = {}
+        
+        metadata.update({
+            'doc_id': doc_id,
+            'added_at': datetime.now().isoformat(),
+            'text_length': len(text)
+        })
+        
+        # Add to ChromaDB if available
+        if self.collection:
+            try:
+                embedding = self.embedding_manager.get_embedding(text)
+                if embedding is not None:
+                    self.collection.upsert(
+                        ids=[doc_id],
+                        documents=[text],
+                        embeddings=[embedding.tolist()],
+                        metadatas=[metadata]
+                    )
+                return True
+            except Exception as e:
+                logger.error(f"Error adding document to ChromaDB: {e}")
+        
+        # Fallback to in-memory storage
+        embedding = self.embedding_manager.get_embedding(text)
+        self.documents.append(text)
+        self.embeddings.append(embedding)
+        self.metadata.append(metadata)
+        
+        return True
+    
+    def search(self, query: str, top_k: int = 5, similarity_threshold: float = 0.3) -> List[Dict[str, Any]]:
+        """Search for similar documents."""
+        results = []
+        
+        # Try ChromaDB first
+        if self.collection:
+            try:
+                query_embedding = self.embedding_manager.get_embedding(query)
+                if query_embedding is not None:
+                    chroma_results = self.collection.query(
+                        query_embeddings=[query_embedding.tolist()],
+                        n_results=top_k
+                    )
+                    
+                    for i, doc in enumerate(chroma_results.get('documents', [[]])[0]):
+                        metadata = chroma_results.get('metadatas', [[]])[0][i] if i < len(chroma_results.get('metadatas', [[]])[0]) else {}
+                        distance = chroma_results.get('distances', [[]])[0][i] if i < len(chroma_results.get('distances', [[]])[0]) else 1.0
+                        similarity = 1.0 - distance  # Convert distance to similarity
+                        
+                        if similarity >= similarity_threshold:
+                            results.append({
+                                'text': doc,
+                                'similarity': similarity,
+                                'metadata': metadata
+                            })
+                    
+                    return sorted(results, key=lambda x: x['similarity'], reverse=True)
+            except Exception as e:
+                logger.error(f"Error searching ChromaDB: {e}")
+        
+        # Fallback to in-memory search
+        for i, doc in enumerate(self.documents):
+            similarity = self.embedding_manager.compute_similarity(query, doc)
+            if similarity >= similarity_threshold:
+                results.append({
+                    'text': doc,
+                    'similarity': similarity,
+                    'metadata': self.metadata[i] if i < len(self.metadata) else {}
+                })
+        
+        return sorted(results, key=lambda x: x['similarity'], reverse=True)[:top_k]
+
+class SearchEngine:
+    """Multi-source search engine with semantic capabilities."""
+    
+    def __init__(self):
+        self.embedding_manager = EmbeddingManager()
+        self.knowledge_base = KnowledgeBase(self.embedding_manager)
+        self.search_history = deque(maxlen=1000)
+        self.source_weights = {
+            'knowledge_base': 1.0,
+            'web_search': 0.8,
+            'learned_knowledge': 1.2,
+            'conversation_history': 0.9
+        }
+    
+    def add_to_knowledge_base(self, text: str, source: str = "manual", metadata: Dict = None) -> bool:
+        """Add text to the searchable knowledge base."""
+        if metadata is None:
+            metadata = {}
+        
+        metadata.update({'source': source})
+        return self.knowledge_base.add_document(text, metadata)
+    
+    def semantic_search(self, query: str, sources: List[str] = None, top_k: int = 5) -> List[Dict[str, Any]]:
+        """Perform semantic search across multiple sources."""
+        if sources is None:
+            sources = ['knowledge_base', 'web_search', 'learned_knowledge']
+        
+        all_results = []
+        
+        # Search knowledge base
+        if 'knowledge_base' in sources:
+            kb_results = self.knowledge_base.search(query, top_k)
+            for result in kb_results:
+                result['source'] = 'knowledge_base'
+                result['weighted_score'] = result['similarity'] * self.source_weights['knowledge_base']
+                all_results.append(result)
+        
+        # Search learned knowledge
+        if 'learned_knowledge' in sources:
+            learned_results = self._search_learned_knowledge(query)
+            for result in learned_results:
+                result['source'] = 'learned_knowledge'
+                result['weighted_score'] = result['similarity'] * self.source_weights['learned_knowledge']
+                all_results.append(result)
+        
+        # Search web if available
+        if 'web_search' in sources:
+            web_results = self._search_web(query)
+            for result in web_results:
+                result['source'] = 'web_search'
+                result['weighted_score'] = result.get('similarity', 0.7) * self.source_weights['web_search']
+                all_results.append(result)
+        
+        # Sort by weighted score and return top results
+        all_results.sort(key=lambda x: x['weighted_score'], reverse=True)
+        
+        # Record search
+        self.search_history.append({
+            'query': query,
+            'timestamp': datetime.now().isoformat(),
+            'sources': sources,
+            'results_count': len(all_results[:top_k])
+        })
+        
+        return all_results[:top_k]
+    
+    def _search_learned_knowledge(self, query: str) -> List[Dict[str, Any]]:
+        """Search the self-learning knowledge base."""
+        results = []
+        
+        try:
+            from importlib import import_module
+            main_mod = import_module("main")
+            jarvis_instance = getattr(main_mod, "jarvis", None)
+            
+            if jarvis_instance and "learn" in jarvis_instance.skills:
+                # Try to get learned response
+                learned_response = jarvis_instance.skills["learn"](query)
+                if learned_response and not learned_response.lower().startswith(("i couldn't", "sorry")):
+                    similarity = self.embedding_manager.compute_similarity(query, learned_response)
+                    results.append({
+                        'text': learned_response,
+                        'similarity': similarity,
+                        'metadata': {'source': 'learned_knowledge', 'type': 'learned_response'}
+                    })
+        except Exception as e:
+            logger.error(f"Error searching learned knowledge: {e}")
+        
+        return results
+    
+    def _search_web(self, query: str) -> List[Dict[str, Any]]:
+        """Search web sources."""
+        results = []
+        
+        try:
+            from importlib import import_module
+            main_mod = import_module("main")
+            jarvis_instance = getattr(main_mod, "jarvis", None)
+            
+            if jarvis_instance and "search" in jarvis_instance.skills:
+                web_response = jarvis_instance.skills["search"](f"search {query}")
+                if web_response and not web_response.lower().startswith(("search failed", "sorry")):
+                    # Estimate similarity based on query terms in response
+                    query_words = set(query.lower().split())
+                    response_words = set(web_response.lower().split())
+                    similarity = len(query_words.intersection(response_words)) / max(len(query_words), 1)
+                    
+                    results.append({
+                        'text': web_response,
+                        'similarity': similarity,
+                        'metadata': {'source': 'web_search', 'type': 'web_result'}
+                    })
+        except Exception as e:
+            logger.error(f"Error searching web: {e}")
+        
+        return results
+    
+    def get_search_statistics(self) -> Dict[str, Any]:
+        """Get search usage statistics."""
+        if not self.search_history:
+            return {'message': 'No searches performed yet'}
+        
+        stats = {
+            'total_searches': len(self.search_history),
+            'recent_queries': [item['query'] for item in list(self.search_history)[-5:]],
+            'source_usage': defaultdict(int),
+            'average_results': 0
+        }
+        
+        total_results = 0
+        for search in self.search_history:
+            total_results += search['results_count']
+            for source in search['sources']:
+                stats['source_usage'][source] += 1
+        
+        stats['average_results'] = total_results / len(self.search_history) if self.search_history else 0
+        stats['source_usage'] = dict(stats['source_usage'])
+        
+        return stats
+
+class QueryProcessor:
+    """Processes and enhances search queries."""
+    
+    def __init__(self):
+        self.query_expansions = {
+            'what is': ['definition of', 'explain', 'describe'],
+            'how to': ['steps to', 'way to', 'method for'],
+            'why': ['reason for', 'cause of', 'explanation for'],
+            'when': ['time of', 'date of', 'period of'],
+            'where': ['location of', 'place of', 'position of']
+        }
+    
+    def expand_query(self, query: str) -> List[str]:
+        """Expand query with synonyms and related terms."""
+        expanded_queries = [query]
+        query_lower = query.lower()
+        
+        for trigger, expansions in self.query_expansions.items():
+            if trigger in query_lower:
+                for expansion in expansions:
+                    expanded_query = query_lower.replace(trigger, expansion)
+                    expanded_queries.append(expanded_query)
+        
+        return expanded_queries
+    
+    def extract_entities(self, query: str) -> Dict[str, List[str]]:
+        """Extract entities from query for focused search."""
+        entities = {
+            'names': re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', query),
+            'dates': re.findall(r'\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b', query),
+            'numbers': re.findall(r'\b\d+(?:\.\d+)?\b', query),
+            'locations': []  # Could be enhanced with NER
+        }
+        
+        return {k: v for k, v in entities.items() if v}
+
+# Global search engine instance
+search_engine = SearchEngine()
+
+def enhanced_semantic_search_skill(user_input: str, conversation_history=None, **kwargs) -> str:
+    """
+    Enhanced semantic search skill with multi-source integration.
+    
+    Usage:
+    - semantic search <query>
+    - search semantics <query>
+    - find similar <query>
+    - search stats
+    - add knowledge <text>
+    """
+    user_input = user_input.strip()
+    
+    # Handle different commands
+    if user_input.lower() in ['search stats', 'search statistics']:
+        stats = search_engine.get_search_statistics()
+        
+        if 'message' in stats:
+            return stats['message']
+        
+        response_parts = []
+        response_parts.append("📊 **Semantic Search Statistics:**")
+        response_parts.append(f"• Total searches: {stats['total_searches']}")
+        response_parts.append(f"• Average results per search: {stats['average_results']:.1f}")
+        response_parts.append("")
+        
+        if stats['source_usage']:
+            response_parts.append("**Source Usage:**")
+            for source, count in stats['source_usage'].items():\n                response_parts.append(f\"• {source.replace('_', ' ').title()}: {count}\")\n            response_parts.append(\"\")\n        \n        if stats['recent_queries']:\n            response_parts.append(\"**Recent Queries:**\")\n            for query in stats['recent_queries']:\n                response_parts.append(f\"• {query}\")\n        \n        return \"\\n\".join(response_parts)\n    \n    elif user_input.lower().startswith('add knowledge '):\n        text_to_add = user_input[13:].strip()\n        if not text_to_add:\n            return \"Please provide text to add to the knowledge base.\"\n        \n        success = search_engine.add_to_knowledge_base(text_to_add, source=\"user_added\")\n        if success:\n            return f\"✅ Added to knowledge base: {text_to_add[:100]}{'...' if len(text_to_add) > 100 else ''}\"\n        else:\n            return \"❌ Failed to add text to knowledge base.\"\n    \n    else:\n        # Extract query from different command formats\n        query = \"\"\n        if user_input.lower().startswith('semantic search '):\n            query = user_input[16:].strip()\n        elif user_input.lower().startswith('search semantics '):\n            query = user_input[17:].strip()\n        elif user_input.lower().startswith('find similar '):\n            query = user_input[13:].strip()\n        else:\n            query = user_input\n        \n        if not query:\n            return \"Please provide a search query.\"\n        \n        try:\n            # Process and expand query\n            processor = QueryProcessor()\n            expanded_queries = processor.expand_query(query)\n            entities = processor.extract_entities(query)\n            \n            # Perform semantic search\n            results = search_engine.semantic_search(query, top_k=5)\n            \n            if not results:\n                return f\"No semantic matches found for: '{query}'. Try rephrasing or adding more specific terms.\"\n            \n            # Build response\n            response_parts = []\n            response_parts.append(f\"🔍 **Semantic Search Results for: '{query}'**\")\n            \n            if entities:\n                response_parts.append(f\"**Detected entities:** {', '.join([f'{k}: {v}' for k, v in entities.items()])}\")\n            \n            response_parts.append(\"\")\n            \n            for i, result in enumerate(results, 1):\n                similarity = result['similarity']\n                source = result['source'].replace('_', ' ').title()\n                text = result['text']\n                \n                response_parts.append(f\"**Result {i}** (Similarity: {similarity:.2f}, Source: {source})\")\n                \n                # Truncate long results\n                if len(text) > 300:\n                    text = text[:300] + \"...\"\n                \n                response_parts.append(text)\n                response_parts.append(\"\")\n            \n            # Add query expansion info if helpful\n            if len(expanded_queries) > 1:\n                response_parts.append(\"💡 **Alternative queries tried:**\")\n                for alt_query in expanded_queries[1:3]:  # Show up to 2 alternatives\n                    response_parts.append(f\"• {alt_query}\")\n            \n            return \"\\n\".join(response_parts)\n            \n        except Exception as e:\n            logger.error(f\"Error in semantic search: {e}\")\n            return f\"I encountered an error during semantic search: {str(e)}\"\n\ndef auto_ingest_from_conversation(conversation_history: List[Tuple[str, str]]) -> int:\n    \"\"\"Automatically ingest useful information from conversation history.\"\"\"\n    if not conversation_history:\n        return 0\n    \n    ingested_count = 0\n    \n    for role, message in conversation_history:\n        # Only ingest substantial responses from Jarvis\n        if role == \"Jarvis\" and len(message.split()) > 20:\n            # Skip error messages and simple acknowledgments\n            if not message.lower().startswith((\"sorry\", \"i don't\", \"error\", \"failed\")):\n                metadata = {\n                    'source': 'conversation_history',\n                    'role': role,\n                    'ingested_at': datetime.now().isoformat()\n                }\n                \n                if search_engine.add_to_knowledge_base(message, \"conversation\", metadata):\n                    ingested_count += 1\n    \n    return ingested_count\n\ndef register(jarvis):\n    \"\"\"Register the semantic search skill.\"\"\"\n    jarvis.register_skill(\"semantic_search\", enhanced_semantic_search_skill)\n    jarvis.register_skill(\"find_similar\", enhanced_semantic_search_skill)\n    jarvis.register_skill(\"search_semantics\", enhanced_semantic_search_skill)\n    \n    # Make search engine available globally\n    jarvis.search_engine = search_engine\n    \n    # Auto-ingest existing conversation history if available\n    try:\n        if hasattr(jarvis, 'conversation_history') and jarvis.conversation_history:\n            ingested = auto_ingest_from_conversation(jarvis.conversation_history)\n            if ingested > 0:\n                logger.info(f\"Auto-ingested {ingested} conversation entries into semantic search\")\n    except Exception as e:\n        logger.error(f\"Error auto-ingesting conversation history: {e}\")

@@ -1,0 +1,9 @@
+{
+  "total_ingestions": 20,
+  "successful_ingestions": 20,
+  "last_ingest_time": "2025-07-26T14:33:16.838115",
+  "topics_ingested": 20,
+  "sources_used": {
+    "Wikipedia": 20
+  }
+}
